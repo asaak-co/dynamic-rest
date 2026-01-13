@@ -331,8 +331,15 @@ class WithDynamicSerializerMixin(
             # this addresses the frontends that send
             # undefined resource fields as null on POST/PUT
             for field_name, field in self.get_all_fields().items():
+                if 'allow_null' in getattr(field, 'kwargs', {}):
+                    allow_null = field.allow_null
+                else:
+                    # infer from model field
+                    model_field = getattr(field, 'model_field', None)
+                    model_allows_null = getattr(model_field, 'null', False) if model_field else False
+                    allow_null = field.allow_null or model_allows_null
                 if (
-                    field.allow_null is False
+                    allow_null is False
                     and field.required is False
                     and field_name in data
                     and data[field_name] is None
