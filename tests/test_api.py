@@ -1,6 +1,7 @@
 import datetime
 import json
 from decimal import Decimal
+from unittest.mock import patch
 from django.db import connection
 from urllib.parse import quote
 from django.test import override_settings
@@ -1863,6 +1864,21 @@ class TestCatsAPI(APITestCase):
         self.assertEqual(200, response.status_code, response.content)
         data = json.loads(response.content.decode("utf-8"))
         self.assertEqual(data["data"].get("numCats"), 3, data["data"])
+
+    def test_combine_named_constant(self):
+        from tests.viewsets import CarViewSet
+
+        def return_two(name):
+            return 2 if name == "max_cars_constant" else None
+
+        with patch.object(CarViewSet, "get_combine_constant", side_effect=return_two):
+            response = self.client.get(
+                "/cars?combine=count(name) / max_cars_constant as rate"
+            )
+        self.assertEqual(200, response.status_code, response.content)
+        data = json.loads(response.content.decode("utf-8"))
+        # 3 cars / 2 = 1.5
+        self.assertAlmostEqual(data["data"]["rate"], 1.5, places=5)
 
     def test_sort_relationship_rewrite(self):
         response = self.client.get("/cars?sort[]=-country_name&include[]=name")
