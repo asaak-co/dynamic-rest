@@ -1871,7 +1871,7 @@ class TestCatsAPI(APITestCase):
         def return_two(name):
             return 2 if name == "max_cars_constant" else None
 
-        with patch.object(CarViewSet, "get_combine_constant", side_effect=return_two):
+        with patch.object(CarViewSet, "get_named_constant", side_effect=return_two):
             response = self.client.get(
                 "/cars?combine=count(name) / max_cars_constant as rate"
             )

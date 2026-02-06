@@ -726,9 +726,9 @@ class WithDynamicViewSetBase(object):
         else:
             target = value
 
-        # Named constant: identifier that did not resolve to a field → literal via get_combine_constant
+        # Named constant: identifier that did not resolve to a field → literal via get_named_constant
         if not operator and model_field is None and target is not None:
-            constant = self.get_combine_constant(str(target))
+            constant = self.get_named_constant(str(target))
             if constant is not None:
                 return {'key': key, 'value': constant, 'expression': expression}
 
@@ -869,7 +869,7 @@ class WithDynamicViewSetBase(object):
         'upper': Upper
     }
 
-    def get_combine_constant(self, name):
+    def get_named_constant(self, name):
         """
         Resolve a named constant used in combine expressions to a literal value.
 
