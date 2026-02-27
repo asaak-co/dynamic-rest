@@ -726,6 +726,12 @@ class WithDynamicViewSetBase(object):
         else:
             target = value
 
+        # Named constant: identifier that did not resolve to a field → literal via get_named_constant
+        if not operator and model_field is None and target is not None:
+            constant = self.get_named_constant(str(target))
+            if constant is not None:
+                return {'key': key, 'value': constant, 'expression': expression}
+
         options = {}
         args = []
         fn = fn_cast = None
@@ -862,6 +868,24 @@ class WithDynamicViewSetBase(object):
         # 'trim': Trim,
         'upper': Upper
     }
+
+    def get_named_constant(self, name):
+        """
+        Resolve a named constant used in combine expressions to a literal value.
+
+        When an identifier in a combine expression (e.g. in arithmetic like
+        count(field) / 10) is not a model field,
+        this method is called with that identifier. Return a numeric (or other
+        literal) value to use it in the expression; return None to fall back
+        to the default behavior (literalize the string, which will keep the
+        raw name and usually fail in aggregation).
+
+        Override in a subclass to support named constants, e.g. by calling
+        a class method: return getattr(self, name)() if callable(getattr(
+        self, name, None)) else None.
+        """
+        return None
+
     def combine(self, request, combine, **kwargs):
         serializer = self.get_serializer()
         expression = combine.get('', None)
