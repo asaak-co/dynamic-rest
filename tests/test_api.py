@@ -1880,6 +1880,24 @@ class TestCatsAPI(APITestCase):
         # 3 cars / 2 = 1.5
         self.assertAlmostEqual(data["data"]["rate"], 1.5, places=5)
 
+    def test_combine_count_boolean(self):
+        # Setup: 4 users exist with is_dead=False (default).
+        # Set 2 of them to is_dead=True, 1 to None.
+        users = list(User.objects.all().order_by('id'))
+        users[0].is_dead = True
+        users[0].save()
+        users[1].is_dead = True
+        users[1].save()
+        users[2].is_dead = None
+        users[2].save()
+        # users[3] remains is_dead=False
+
+        # count(is_dead) should only count True values (not False or None)
+        response = self.client.get("/users?combine=count(is_dead)")
+        self.assertEqual(200, response.status_code, response.content)
+        data = json.loads(response.content.decode("utf-8"))
+        self.assertEqual(data["data"]["count(is_dead)"], 2)
+
     def test_sort_relationship_rewrite(self):
         response = self.client.get("/cars?sort[]=-country_name&include[]=name")
         self.assertEqual(200, response.status_code, response.content)

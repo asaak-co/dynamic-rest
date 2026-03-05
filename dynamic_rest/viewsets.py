@@ -10,7 +10,7 @@ from io import StringIO
 import inflection
 
 from django.http import QueryDict
-from django.db.models import Sum, Min, Max, Avg, Count, F
+from django.db.models import Q, Sum, Min, Max, Avg, Count, F
 from django.db.models.functions import (
     Trunc, Length, Lower, Upper, Cast
 )
@@ -714,12 +714,14 @@ class WithDynamicViewSetBase(object):
                 value = expression
 
         model_field = target = None
+        resolved_model_fields = None
         if re.match(REGEX.identifier, value):
             try:
                 model_fields, _ = serializer.resolve(value)
             except Exception:
                 target = value
             else:
+                resolved_model_fields = model_fields
                 target = model_field = '__'.join([
                     Meta.get_query_name(f) for f in model_fields
                 ])
@@ -772,6 +774,14 @@ class WithDynamicViewSetBase(object):
             args = fn.get('args', args)
             fn_cast = fn.get('cast')
             fn = fn['function']
+
+        # For boolean fields, count/distinct should only count True values
+        if (
+            fn is Count
+            and resolved_model_fields
+            and isinstance(resolved_model_fields[-1], models.BooleanField)
+        ):
+            options['filter'] = Q(**{target: True})
 
         value = fn(target, *args, **options)
         if cast:
