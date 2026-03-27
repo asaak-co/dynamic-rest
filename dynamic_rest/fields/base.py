@@ -112,6 +112,7 @@ class DynamicField(fields.Field, DynamicBase):
         self.sort_by = kwargs.pop('sort_by', None)
         self.bound = False
         self.ui = kwargs.pop('ui', True)
+        self.extra = kwargs.pop('extra', None)
         choices = kwargs.get('choices', None)
         if choices:
             self.choices = choices
