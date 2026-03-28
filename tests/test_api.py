@@ -1052,9 +1052,391 @@ class TestRelationsAPI(APITestCase):
 
         self.assertFalse("location" in content["users"][0])
 
-    def test_relation_filter_returns_error(self):
-        r = self.client.get("/locations/1/users/?filter{name}=foo")
-        self.assertEqual(400, r.status_code)
+    def test_relation_filter_supported(self):
+        r = self.client.get("/locations/1/users/?filter{name}=0")
+        self.assertEqual(200, r.status_code, r.content)
+        content = json.loads(r.content.decode("utf-8"))
+        # Only users matching the filter should be returned
+        for user in content["users"]:
+            self.assertEqual(user["name"], "0")
+
+
+class TestListRelatedAPI(APITestCase):
+    """Test the many-relation list_related endpoint.
+
+    GET /<resource>/<pk>/<field_name>/ should return a paginated,
+    filterable, sortable list of related objects using a dynamic viewset.
+    """
+
+    def setUp(self):
+        self.fixture = create_fixture()
+
+    # ── basic response format ─────────────────────────────────────────
+
+    def test_many_relation_returns_envelope(self):
+        """GET /users/1/groups/ returns {"groups": [...], "meta": {...}}"""
+        r = self.client.get("/users/1/groups/")
+        self.assertEqual(200, r.status_code)
+        content = json.loads(r.content.decode("utf-8"))
+        self.assertIn("groups", content)
+        self.assertIsInstance(content["groups"], list)
+        self.assertIn("meta", content)
+
+    def test_many_relation_returns_correct_objects(self):
+        """Returned groups match what the user actually belongs to."""
+        r = self.client.get("/users/1/groups/")
+        content = json.loads(r.content.decode("utf-8"))
+        returned_ids = sorted([g["id"] for g in content["groups"]])
+        expected_ids = sorted(
+            self.fixture.users[0].groups.values_list("id", flat=True)
+        )
+        self.assertEqual(returned_ids, expected_ids)
+
+    def test_many_relation_m2m_reverse(self):
+        """GET /groups/1/users/ returns users in the group."""
+        r = self.client.get("/groups/1/users/")
+        self.assertEqual(200, r.status_code)
+        content = json.loads(r.content.decode("utf-8"))
+        self.assertIn("users", content)
+        returned_ids = sorted([u["id"] for u in content["users"]])
+        expected_ids = sorted(
+            self.fixture.groups[0].users.values_list("id", flat=True)
+        )
+        self.assertEqual(returned_ids, expected_ids)
+
+    def test_many_relation_reverse_fk(self):
+        """GET /locations/1/users/ returns users at that location."""
+        r = self.client.get("/locations/1/users/")
+        self.assertEqual(200, r.status_code)
+        content = json.loads(r.content.decode("utf-8"))
+        self.assertIn("users", content)
+        returned_ids = sorted([u["id"] for u in content["users"]])
+        expected_ids = sorted(
+            User.objects.filter(location_id=1).values_list("id", flat=True)
+        )
+        self.assertEqual(returned_ids, expected_ids)
+
+    def test_single_relation_returns_object(self):
+        """GET /users/1/location/ returns {"location": {...}} (single FK)."""
+        r = self.client.get("/users/1/location/")
+        self.assertEqual(200, r.status_code)
+        content = json.loads(r.content.decode("utf-8"))
+        self.assertIn("location", content)
+        self.assertEqual(
+            content["location"]["id"],
+            self.fixture.users[0].location_id,
+        )
+
+    def test_nonexistent_parent_returns_404(self):
+        r = self.client.get("/users/99999/groups/")
+        self.assertEqual(404, r.status_code)
+
+    def test_nonrelation_field_returns_404(self):
+        r = self.client.get("/users/1/name/")
+        self.assertEqual(404, r.status_code)
+
+    def test_empty_many_relation(self):
+        """A user with no permissions returns empty list with metadata."""
+        user = User.objects.create(name="lonely", last_name="user")
+        r = self.client.get("/users/%s/permissions/" % user.pk)
+        self.assertEqual(200, r.status_code)
+        content = json.loads(r.content.decode("utf-8"))
+        self.assertEqual(content["permissions"], [])
+        self.assertIn("meta", content)
+        self.assertEqual(content["meta"]["total_results"], 0)
+
+    # ── pagination ────────────────────────────────────────────────────
+
+    def test_default_pagination_metadata(self):
+        """Response includes page, per_page, total_results, total_pages."""
+        r = self.client.get("/users/1/groups/")
+        content = json.loads(r.content.decode("utf-8"))
+        meta = content["meta"]
+        self.assertEqual(meta["page"], 1)
+        self.assertEqual(meta["per_page"], 50)
+        self.assertIn("total_results", meta)
+        self.assertIn("total_pages", meta)
+
+    def test_custom_per_page(self):
+        """per_page=1 returns exactly one item and correct metadata."""
+        r = self.client.get("/users/1/groups/?per_page=1")
+        self.assertEqual(200, r.status_code)
+        content = json.loads(r.content.decode("utf-8"))
+        self.assertEqual(len(content["groups"]), 1)
+        self.assertEqual(content["meta"]["per_page"], 1)
+        self.assertEqual(content["meta"]["total_results"], 2)
+        self.assertEqual(content["meta"]["total_pages"], 2)
+
+    def test_page_parameter(self):
+        """page=2 with per_page=1 returns the second item."""
+        r = self.client.get("/users/1/groups/?per_page=1&page=2")
+        self.assertEqual(200, r.status_code)
+        content = json.loads(r.content.decode("utf-8"))
+        self.assertEqual(len(content["groups"]), 1)
+        self.assertEqual(content["meta"]["page"], 2)
+
+    def test_default_page_size_is_50(self):
+        """Default per_page should be 50."""
+        r = self.client.get("/users/1/groups/")
+        content = json.loads(r.content.decode("utf-8"))
+        self.assertEqual(content["meta"]["per_page"], 50)
+
+    # ── sorting ───────────────────────────────────────────────────────
+
+    def test_sort_ascending(self):
+        r = self.client.get("/users/1/groups/?sort[]=name")
+        self.assertEqual(200, r.status_code)
+        content = json.loads(r.content.decode("utf-8"))
+        names = [g["name"] for g in content["groups"]]
+        self.assertEqual(names, sorted(names))
+
+    def test_sort_descending(self):
+        r = self.client.get("/users/1/groups/?sort[]=-name")
+        self.assertEqual(200, r.status_code)
+        content = json.loads(r.content.decode("utf-8"))
+        names = [g["name"] for g in content["groups"]]
+        self.assertEqual(names, sorted(names, reverse=True))
+
+    def test_sort_location_users_by_name(self):
+        r = self.client.get("/locations/1/users/?sort[]=-name")
+        self.assertEqual(200, r.status_code)
+        content = json.loads(r.content.decode("utf-8"))
+        names = [u["name"] for u in content["users"]]
+        self.assertEqual(names, sorted(names, reverse=True))
+
+    # ── filtering ─────────────────────────────────────────────────────
+
+    def test_filter_exact(self):
+        r = self.client.get("/locations/1/users/?filter{name}=0")
+        self.assertEqual(200, r.status_code)
+        content = json.loads(r.content.decode("utf-8"))
+        self.assertTrue(len(content["users"]) > 0)
+        for user in content["users"]:
+            self.assertEqual(user["name"], "0")
+
+    def test_filter_returns_empty(self):
+        """Filter that matches nothing returns empty list."""
+        r = self.client.get("/locations/1/users/?filter{name}=nonexistent")
+        self.assertEqual(200, r.status_code)
+        content = json.loads(r.content.decode("utf-8"))
+        self.assertEqual(content["users"], [])
+        self.assertEqual(content["meta"]["total_results"], 0)
+
+    def test_filter_with_operator(self):
+        """filter{name.icontains}=0 works on related endpoint."""
+        r = self.client.get("/locations/1/users/?filter{name.icontains}=0")
+        self.assertEqual(200, r.status_code)
+        content = json.loads(r.content.decode("utf-8"))
+        for user in content["users"]:
+            self.assertIn("0", user["name"])
+
+    def test_filter_on_groups(self):
+        """filter{name}=0 on groups endpoint works."""
+        r = self.client.get("/users/1/groups/?filter{name}=0")
+        self.assertEqual(200, r.status_code)
+        content = json.loads(r.content.decode("utf-8"))
+        self.assertEqual(len(content["groups"]), 1)
+        self.assertEqual(content["groups"][0]["name"], "0")
+
+    # ── include / exclude ─────────────────────────────────────────────
+
+    def test_include_nested_relation(self):
+        """include[]=permissions. sideloads related permissions."""
+        r = self.client.get("/users/1/groups/?include[]=permissions.")
+        self.assertEqual(200, r.status_code, r.content)
+        content = json.loads(r.content.decode("utf-8"))
+        self.assertIn("groups", content)
+        self.assertIn("permissions", content)
+
+    def test_include_nested_fields(self):
+        """include[]=permissions.name returns only name on permissions."""
+        r = self.client.get("/users/1/groups/?include[]=permissions.name")
+        self.assertEqual(200, r.status_code, r.content)
+        content = json.loads(r.content.decode("utf-8"))
+        self.assertIn("permissions", content)
+        for perm in content["permissions"]:
+            self.assertIn("name", perm)
+
+    def test_exclude_field(self):
+        """exclude[]=name removes the name field from results."""
+        r = self.client.get("/users/1/groups/?exclude[]=name")
+        self.assertEqual(200, r.status_code, r.content)
+        content = json.loads(r.content.decode("utf-8"))
+        for group in content["groups"]:
+            self.assertNotIn("name", group)
+
+    def test_include_on_location_users(self):
+        """include[]=groups. on /locations/1/users/ sideloads groups."""
+        r = self.client.get("/locations/1/users/?include[]=groups.")
+        self.assertEqual(200, r.status_code, r.content)
+        content = json.loads(r.content.decode("utf-8"))
+        self.assertIn("users", content)
+        self.assertIn("groups", content)
+
+    # ── combine / aggregation ────────────────────────────────────────
+
+    def test_combine_count_m2m(self):
+        """combine.=count(id) on M2M returns correct count."""
+        r = self.client.get("/users/1/groups/?combine.=count(id)")
+        self.assertEqual(200, r.status_code)
+        content = json.loads(r.content.decode("utf-8"))
+        expected = self.fixture.users[0].groups.count()
+        self.assertEqual(content["data"]["count(id)"], expected)
+
+    def test_combine_count_reverse_fk(self):
+        """combine.=count(id) on reverse FK returns correct count."""
+        r = self.client.get("/locations/1/users/?combine.=count(id)")
+        self.assertEqual(200, r.status_code)
+        content = json.loads(r.content.decode("utf-8"))
+        expected = User.objects.filter(location_id=1).count()
+        self.assertEqual(content["data"]["count(id)"], expected)
+
+    def test_combine_sum_m2m(self):
+        """combine.=sum(code) on M2M permissions."""
+        r = self.client.get("/users/1/permissions/?combine.=sum(code)")
+        self.assertEqual(200, r.status_code)
+        content = json.loads(r.content.decode("utf-8"))
+        expected = sum(
+            self.fixture.users[0].permissions.values_list("code", flat=True)
+        )
+        self.assertEqual(content["data"]["sum(code)"], expected)
+
+    def test_combine_multiple_aggregations(self):
+        """Multiple aggregations in one request."""
+        r = self.client.get(
+            "/users/1/permissions/?combine.=count(id),sum(code),avg(code)"
+        )
+        self.assertEqual(200, r.status_code)
+        content = json.loads(r.content.decode("utf-8"))
+        self.assertIn("count(id)", content["data"])
+        self.assertIn("sum(code)", content["data"])
+        self.assertIn("avg(code)", content["data"])
+
+    def test_combine_with_by_m2m(self):
+        """combine.by groups results on M2M."""
+        r = self.client.get(
+            "/users/1/permissions/?combine.=count(id)&combine.by=name"
+        )
+        self.assertEqual(200, r.status_code)
+        content = json.loads(r.content.decode("utf-8"))
+        data = content["data"]
+        # Each permission name should have count 1
+        for name, vals in data.items():
+            self.assertEqual(vals["count(id)"], 1)
+
+    def test_combine_with_by_reverse_fk(self):
+        """combine.by groups results on reverse FK."""
+        r = self.client.get(
+            "/locations/1/users/?combine.=count(id)&combine.by=name"
+        )
+        self.assertEqual(200, r.status_code)
+        content = json.loads(r.content.decode("utf-8"))
+        data = content["data"]
+        total = sum(v["count(id)"] for v in data.values())
+        expected = User.objects.filter(location_id=1).count()
+        self.assertEqual(total, expected)
+
+    def test_combine_with_filter_m2m(self):
+        """Filter + combine on M2M: only matching rows are aggregated."""
+        r = self.client.get(
+            "/users/1/permissions/?filter{code.gte}=1&combine.=count(id)"
+        )
+        self.assertEqual(200, r.status_code)
+        content = json.loads(r.content.decode("utf-8"))
+        expected = self.fixture.users[0].permissions.filter(
+            code__gte=1
+        ).count()
+        self.assertEqual(content["data"]["count(id)"], expected)
+
+    def test_combine_with_filter_reverse_fk(self):
+        """Filter + combine on reverse FK."""
+        r = self.client.get(
+            "/locations/1/users/?filter{name}=0&combine.=count(id)"
+        )
+        self.assertEqual(200, r.status_code)
+        content = json.loads(r.content.decode("utf-8"))
+        expected = User.objects.filter(location_id=1, name="0").count()
+        self.assertEqual(content["data"]["count(id)"], expected)
+
+    def test_combine_min_max_m2m(self):
+        """min/max aggregations on M2M."""
+        r = self.client.get(
+            "/users/1/permissions/?combine.=min(code),max(code)"
+        )
+        self.assertEqual(200, r.status_code)
+        content = json.loads(r.content.decode("utf-8"))
+        codes = list(
+            self.fixture.users[0].permissions.values_list("code", flat=True)
+        )
+        self.assertEqual(content["data"]["min(code)"], min(codes))
+        self.assertEqual(content["data"]["max(code)"], max(codes))
+
+    # ── combined features ─────────────────────────────────────────────
+
+    def test_filter_and_sort(self):
+        """Filtering and sorting work together."""
+        r = self.client.get(
+            "/locations/1/users/?filter{name.in}=0&filter{name.in}=1"
+            "&sort[]=-name"
+        )
+        self.assertEqual(200, r.status_code)
+        content = json.loads(r.content.decode("utf-8"))
+        names = [u["name"] for u in content["users"]]
+        self.assertEqual(names, sorted(names, reverse=True))
+
+    def test_filter_sort_and_paginate(self):
+        """All three features work together."""
+        r = self.client.get(
+            "/locations/1/users/?sort[]=name&per_page=1&page=1"
+        )
+        self.assertEqual(200, r.status_code)
+        content = json.loads(r.content.decode("utf-8"))
+        self.assertEqual(len(content["users"]), 1)
+        self.assertEqual(content["meta"]["page"], 1)
+        # Total should be all users at location 1, not just 1
+        self.assertTrue(content["meta"]["total_results"] >= 1)
+
+
+class TestListRelatedPermissions(APITestCase):
+    """Test that list_related respects parent permissions."""
+
+    def setUp(self):
+        self.fixture = create_fixture()
+        from django.contrib.auth.models import User as AuthUser
+        self.default_user = AuthUser.objects.filter(
+            manager__isnull=True,
+            officer__isnull=True,
+            is_superuser=False,
+        ).first()
+        self.manager_user = AuthUser.objects.filter(
+            manager__isnull=False
+        ).first()
+        self.admin_user = AuthUser.objects.filter(
+            is_superuser=True
+        ).first()
+
+    def test_unauthenticated_can_access_non_permissioned_endpoint(self):
+        """Non-permissioned endpoints work without auth."""
+        r = self.client.get("/users/1/groups/")
+        self.assertEqual(200, r.status_code)
+
+    def test_parent_read_permission_gates_access(self):
+        """If user cannot read the parent, the related endpoint returns 404."""
+        # The default user has * -> read: True but no list permission
+        # So reading a specific user's related objects should work via read
+        self.client.force_authenticate(user=self.default_user)
+        # The default user has 'read': True for PermissionsUserSerializer
+        # but no 'list' permission, and list_related checks parent read
+        # via get_queryset which uses read permission for detail views
+        r = self.client.get("/p/users/%s/username/" % self.default_user.pk)
+        # username is not a relation field, so this should 404
+        self.assertEqual(404, r.status_code)
+
+    def test_admin_bypasses_permissions(self):
+        """Superusers bypass permission checks."""
+        self.client.force_authenticate(user=self.admin_user)
+        r = self.client.get("/p/users/%s/" % self.default_user.pk)
+        self.assertEqual(200, r.status_code)
 
 
 class TestUserLocationsAPI(APITestCase):

@@ -16,6 +16,7 @@ from django.db.models.functions import (
 )
 from django.db import models
 from rest_framework import exceptions, status, viewsets
+from rest_framework.mixins import ListModelMixin
 from rest_framework.response import Response
 from rest_framework.request import is_form_media_type
 
@@ -1092,67 +1093,128 @@ class WithDynamicViewSetBase(object):
         return Response(response, status=200)
 
     def list_related(self, request, pk=None, field_name=None):
-        """Fetch related object(s), as if sideloaded (used to support
-        link objects).
+        """Fetch related object(s) through a relation field.
+
+        For many-relations, routes through a dynamically-created viewset
+        to get full support for filtering, sorting, pagination (default 50),
+        and include[]/exclude[].
+
+        For single relations (FK, O2O), returns the object directly.
+
+        Permissions are checked on the parent object: if you can read
+        the parent and the field is accessible, you can list the related
+        objects.
 
         This method gets mapped to `/<resource>/<pk>/<field_name>/` by
-        DynamicRouter for all DynamicRelationField fields. Generally,
-        this method probably shouldn't be overridden.
-
-        An alternative implementation would be to generate reverse queries.
-        For an exploration of that approach, see:
-            https://gist.github.com/ryochiji/54687d675978c7d96503
+        DynamicRouter for all DynamicRelationField fields.
         """
 
-        # Explicitly disable filtering support. Applying filters to this
-        # endpoint would require us to pass through sideload filters, which
-        # can have unintended consequences when applied asynchronously.
-        if self.get_request_feature(self.FILTER):
-            raise exceptions.ValidationError(
-                'Filtering is not enabled on relation endpoints.'
+        # Get the field from a temporary serializer (for validation only)
+        serializer_class = self.get_serializer_class()
+        temp_serializer = serializer_class()
+        all_fields = temp_serializer.get_all_fields()
+        field = all_fields.get(field_name)
+
+        if field is None:
+            raise exceptions.NotFound('Unknown field: "%s".' % field_name)
+
+        if not hasattr(field, 'serializer_class'):
+            raise exceptions.NotFound(
+                '"%s" is not a related field.' % field_name
             )
 
-        # Prefix include/exclude filters with field_name so it's scoped to
-        # the parent object.
-        field_prefix = field_name + '.'
-        self._prefix_inex_params(request, self.INCLUDE, field_prefix)
-        self._prefix_inex_params(request, self.EXCLUDE, field_prefix)
+        is_many = field.many
 
-        # Filter for parent object, include related field.
-        self.request.query_params.add('filter{pk}', pk)
-        self.request.query_params.add(self.INCLUDE, field_prefix)
-
-        self._refresh_query_params()
-
-        # Get serializer and field.
-        serializer = self.get_serializer()
-        field = serializer.fields.get(field_name)
-        if field is None:
-            raise exceptions.ValidationError('Unknown field: "%s".' % field_name)
-
-        if not hasattr(field, 'get_serializer'):
-            raise exceptions.ValidationError('Not a related field: "%s".' % field_name)
-
-        # Query for root object, with related field prefetched
-        queryset = self.get_queryset()
-        queryset = self.filter_queryset(queryset)
-        instance = queryset.first()
-
-        if not instance:
+        # Check parent exists and user has read permission.
+        # get_queryset() applies permission-based filtering, so if
+        # the user cannot read the parent, .get() raises NotFound.
+        parent_qs = self.get_queryset()
+        try:
+            instance = parent_qs.get(pk=pk)
+        except parent_qs.model.DoesNotExist:
             raise exceptions.NotFound()
 
-        related = field.get_related(instance)
-        if not related:
-            # See:
-            # http://jsonapi.org/format/#fetching-relationships-responses-404
-            # This is a case where the "link URL exists but the relationship
-            # is empty" and therefore must return a 200. not related:
-            return Response([] if field.many else {}, status=200)
+        # Check field-level permissions from the parent serializer.
+        permissions = getattr(self, 'full_permissions', None)
+        if permissions:
+            field_perms = permissions.fields
+            if (
+                field_perms
+                and not field_perms.no_access
+                and field_name in field_perms.spec
+            ):
+                field_spec = field_perms.spec[field_name]
+                if isinstance(field_spec, dict) and (
+                    field_spec.get('read') is False
+                ):
+                    raise exceptions.PermissionDenied()
 
-        # create an instance of the related serializer
-        # and use it to render the data
-        related_serializer = field.get_serializer(instance=related, envelope=True,)
-        return Response(related_serializer.data)
+        if not is_many:
+            # Single relation (FK / O2O): use a fully-bound serializer
+            # to properly resolve and render the related object.
+            self._prefix_inex_params(request, self.INCLUDE, field_name + '.')
+            self._prefix_inex_params(request, self.EXCLUDE, field_name + '.')
+            self.request.query_params.add('filter{pk}', pk)
+            self.request.query_params.add(self.INCLUDE, field_name + '.')
+            self._refresh_query_params()
+
+            serializer = self.get_serializer()
+            bound_field = serializer.fields.get(field_name)
+            if bound_field is None:
+                bound_field = serializer.get_all_fields().get(field_name)
+
+            queryset = self.get_queryset()
+            queryset = self.filter_queryset(queryset)
+            parent = queryset.first()
+            if not parent:
+                raise exceptions.NotFound()
+
+            related = bound_field.get_related(parent)
+            if not related:
+                return Response({}, status=200)
+
+            related_serializer = bound_field.get_serializer(
+                instance=related, envelope=True
+            )
+            return Response(related_serializer.data)
+
+        # Many relation: route through a dynamic viewset so we get
+        # filtering, sorting, pagination, and includes for free.
+        source = field.source or field_name
+        related_obj = getattr(instance, source)
+        if hasattr(related_obj, 'all'):
+            related_qs = related_obj.all()
+        else:
+            related_qs = related_obj
+
+        related_serializer_class = field.serializer_class
+
+        # Build a one-off viewset for the related model.
+        # Inherits dynamic features (but NOT PermissionsViewSetMixin,
+        # because access is already gated by the parent check above).
+        _related_qs = related_qs
+        _features = WithDynamicViewSetBase.features
+
+        class _RelatedListViewSet(
+            WithDynamicViewSetBase, ListModelMixin, viewsets.GenericViewSet
+        ):
+            serializer_class = related_serializer_class
+            features = _features
+            pagination_class = type(
+                '_RelatedPagination',
+                (DynamicPageNumberPagination,),
+                {'page_size': 50},
+            )
+
+            def get_queryset(inner_self, queryset=None):
+                return _related_qs
+
+        viewset = _RelatedListViewSet()
+        viewset.request = request
+        viewset.args = ()
+        viewset.kwargs = {}
+        viewset.format_kwarg = self.format_kwarg
+        return viewset.list(request)
 
 
 class WithDynamicViewSetMixin(PermissionsViewSetMixin, WithDynamicViewSetBase):
