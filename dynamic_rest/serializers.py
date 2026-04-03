@@ -256,6 +256,10 @@ class WithDynamicSerializerMixin(
         - read_only_fields - list of strings
         - untrimmed_fields - list of strings
         - depends - dict of dependency objects
+        - choice_dependencies - dict mapping field names to dependent choice config:
+            { "child_field": {"parent": "parent_field", "mapping": {parent_value: [allowed, ...]}} }
+            Used for cascading choice UIs (metadata exposes choice_parent + choice_mapping)
+            and server-side validation on create/update.
     """
 
     _ALL_FIELDS_CACHE = {}
@@ -989,6 +993,22 @@ class WithDynamicSerializerMixin(
         depends = getattr(meta, "depends", {})
         self.change_fields(fields, depends, "depends")
 
+        choice_dependencies = getattr(meta, "choice_dependencies", None) or {}
+        for dep_field, spec in choice_dependencies.items():
+            dep = fields.get(dep_field)
+            if not dep or not isinstance(spec, dict):
+                continue
+            parent = spec.get("parent")
+            mapping = spec.get("mapping")
+            if parent is None or mapping is None:
+                continue
+            dep.choice_parent = parent
+            dep.choice_mapping = mapping
+            kw = getattr(dep, "_kwargs", None) or getattr(dep, "kwargs", None)
+            if kw is not None:
+                kw["choice_parent"] = parent
+                kw["choice_mapping"] = mapping
+
     def _get_flagged_field_names(self, fields, attr, meta_attr=None):
         meta = self.get_meta()
         if meta_attr is None:
@@ -1424,6 +1444,49 @@ class WithDynamicSerializerMixin(
 
 class WithDynamicModelSerializerMixin(WithDynamicSerializerMixin):
     """Adds DREST serializer methods specific to model-based serializers."""
+
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        self._validate_choice_dependencies(attrs)
+        return attrs
+
+    def _effective_field_value(self, attrs, field_name):
+        if field_name in attrs:
+            return attrs[field_name]
+        inst = getattr(self, "instance", None)
+        if inst is not None:
+            return getattr(inst, field_name, None)
+        return None
+
+    def _validate_choice_dependencies(self, attrs):
+        choice_deps = getattr(self.Meta, "choice_dependencies", None) or {}
+        if not choice_deps:
+            return
+        for field_name, spec in choice_deps.items():
+            if not isinstance(spec, dict):
+                continue
+            parent_name = spec.get("parent")
+            mapping = spec.get("mapping")
+            if parent_name is None or mapping is None:
+                continue
+            value = self._effective_field_value(attrs, field_name)
+            if value in (None, ""):
+                continue
+            parent_val = self._effective_field_value(attrs, parent_name)
+            if parent_val in (None, ""):
+                raise serializers.ValidationError({
+                    parent_name: 'This field is required when "%s" is set.' % field_name
+                })
+            allowed = mapping.get(parent_val)
+            if allowed is None:
+                continue
+            if value not in allowed:
+                raise serializers.ValidationError({
+                    field_name: 'Invalid choice "%s" for the selected %s.' % (
+                        value,
+                        parent_name,
+                    )
+                })
 
     @classmethod
     def get_model(cls):
