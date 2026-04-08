@@ -257,7 +257,7 @@ class WithDynamicSerializerMixin(
         - untrimmed_fields - list of strings
         - depends - dict of dependency objects
         - choice_dependencies - dict mapping field names to dependent choice config:
-            { "child_field": {"parent": "parent_field", "mapping": {parent_value: [allowed, ...]}} }
+            { "child_field": {"parent_field": {parent_value: [allowed, ...]}} }
             Used for cascading choice UIs (metadata exposes choice_parent + choice_mapping)
             and server-side validation on create/update.
     """
@@ -998,8 +998,7 @@ class WithDynamicSerializerMixin(
             dep = fields.get(dep_field)
             if not dep or not isinstance(spec, dict):
                 continue
-            parent = spec.get("parent")
-            mapping = spec.get("mapping")
+            parent, mapping = self._normalize_choice_dependency_spec(spec)
             if parent is None or mapping is None:
                 continue
             dep.choice_parent = parent
@@ -1008,6 +1007,20 @@ class WithDynamicSerializerMixin(
             if kw is not None:
                 kw["choice_parent"] = parent
                 kw["choice_mapping"] = mapping
+
+    @staticmethod
+    def _normalize_choice_dependency_spec(spec):
+        """
+        Normalize a choice dependency spec to (parent_field_name, mapping).
+
+        Supported form:
+        - {"status": {<parent_value>: [<allowed_child_value>, ...]}}
+        """
+        # required: {"<parent_field>": {...}}
+        if len(spec) != 1:
+            return None, None
+        parent, mapping = next(iter(spec.items()))
+        return parent, mapping
 
     def _get_flagged_field_names(self, fields, attr, meta_attr=None):
         meta = self.get_meta()
@@ -1465,8 +1478,7 @@ class WithDynamicModelSerializerMixin(WithDynamicSerializerMixin):
         for field_name, spec in choice_deps.items():
             if not isinstance(spec, dict):
                 continue
-            parent_name = spec.get("parent")
-            mapping = spec.get("mapping")
+            parent_name, mapping = self._normalize_choice_dependency_spec(spec)
             if parent_name is None or mapping is None:
                 continue
             value = self._effective_field_value(attrs, field_name)
