@@ -113,6 +113,8 @@ class DynamicField(fields.Field, DynamicBase):
         self.bound = False
         self.ui = kwargs.pop('ui', True)
         self.extra = kwargs.pop('extra', None)
+        self.choice_parent = kwargs.pop('choice_parent', None)
+        self.choice_mapping = kwargs.pop('choice_mapping', None)
         choices = kwargs.get('choices', None)
         if choices:
             self.choices = choices

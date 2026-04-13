@@ -115,6 +115,9 @@ class DynamicMetadata(SimpleMetadata):
                     else field.choices
                 )
             ]
+        if getattr(field, 'choice_parent', None):
+            field_info['choice_parent'] = field.choice_parent
+            field_info['choice_mapping'] = getattr(field, 'choice_mapping', None)
         if hasattr(field, 'location'):
             field_info['location'] = field.location
         if hasattr(field, 'hide'):
