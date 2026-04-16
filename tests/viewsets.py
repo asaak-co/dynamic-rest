@@ -21,6 +21,7 @@ from tests.serializers import (
     CatSerializer,
     DogSerializer,
     GroupSerializer,
+    PermissionsLocationSerializer,
     HorseSerializer,
     LocationSerializer,
     OfficerSerializer,
@@ -71,6 +72,14 @@ class PermissionsUserViewSet(
     serializer_class = PermissionsUserSerializer
     model = auth.User
     queryset = auth.User.objects.all()
+
+
+class PermissionsLocationViewSet(
+    DynamicModelViewSet
+):
+    serializer_class = PermissionsLocationSerializer
+    model = Location
+    queryset = Location.objects.all()
 
 
 class GroupNoMergeDictViewSet(DynamicModelViewSet):

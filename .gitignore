@@ -1,4 +1,6 @@
 *.pyc
+.codex
+.claude
 
 .pytest_cache/
 # Byte-compiled / optimized / DLL files

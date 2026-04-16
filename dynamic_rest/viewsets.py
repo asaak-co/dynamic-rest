@@ -337,8 +337,12 @@ class WithDynamicViewSetBase(object):
         Arguments:
           queryset: Optional root-level queryset.
         """
-        serializer = self.get_serializer()
-        meta = getattr(serializer, 'get_meta', lambda x: serializer.Meta)()
+        serializer_class = self.get_serializer_class()
+        meta = getattr(
+            serializer_class,
+            'get_meta',
+            lambda: serializer_class.Meta
+        )()
         return getattr(self, 'queryset', meta.model.objects.all())
 
     def get_request_fields(self):

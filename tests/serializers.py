@@ -294,6 +294,17 @@ class PermissionsUserSerializer(
         }
 
 
+class PermissionsLocationSerializer(LocationSerializer):
+
+    class Meta(LocationSerializer.Meta):
+        permissions = {
+            '*': {
+                'read': True,
+                'list': True,
+            },
+        }
+
+
 class ProfileSerializer(DynamicModelSerializer):
 
     class Meta:

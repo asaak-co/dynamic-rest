@@ -552,9 +552,7 @@ class TestUsersAPI(APITestCase):
         self.assertEqual(1, len(content["groups"]))
         self.assertEqual(group.pk, content["groups"][0]["id"])
 
-        url = (
-            "/users/?filter{groups.members.id}=%s" "&include[]=groups.members" % user.pk
-        )
+        url = "/users/?filter{groups.members.id}=%s&include[]=groups.members" % user.pk
         response = self.client.get(url)
         self.assertEqual(200, response.status_code)
         content = json.loads(response.content.decode("utf-8"))
@@ -573,7 +571,7 @@ class TestUsersAPI(APITestCase):
         self.assertEqual(400, response.status_code)
         content = response.content.decode("utf-8")
         self.assertTrue(
-            ("value has an invalid date format. " "It must be in YYYY-MM-DD format.")
+            ("value has an invalid date format. It must be in YYYY-MM-DD format.")
             in content,
             content,
         )
@@ -675,7 +673,7 @@ class TestUsersAPI(APITestCase):
         Profile.objects.create(user=u2, display_name="moo")
 
         # Test prefetching to pull profile.display_name into UserSerializer
-        url = "/users/?include[]=display_name" "&include[]=thumbnail_url"
+        url = "/users/?include[]=display_name&include[]=thumbnail_url"
 
         with self.assertNumQueries(2):
             response = self.client.get(url)
@@ -1087,9 +1085,7 @@ class TestListRelatedAPI(APITestCase):
         r = self.client.get("/users/1/groups/")
         content = json.loads(r.content.decode("utf-8"))
         returned_ids = sorted([g["id"] for g in content["groups"]])
-        expected_ids = sorted(
-            self.fixture.users[0].groups.values_list("id", flat=True)
-        )
+        expected_ids = sorted(self.fixture.users[0].groups.values_list("id", flat=True))
         self.assertEqual(returned_ids, expected_ids)
 
     def test_many_relation_m2m_reverse(self):
@@ -1099,9 +1095,7 @@ class TestListRelatedAPI(APITestCase):
         content = json.loads(r.content.decode("utf-8"))
         self.assertIn("users", content)
         returned_ids = sorted([u["id"] for u in content["users"]])
-        expected_ids = sorted(
-            self.fixture.groups[0].users.values_list("id", flat=True)
-        )
+        expected_ids = sorted(self.fixture.groups[0].users.values_list("id", flat=True))
         self.assertEqual(returned_ids, expected_ids)
 
     def test_many_relation_reverse_fk(self):
@@ -1248,6 +1242,23 @@ class TestListRelatedAPI(APITestCase):
         self.assertIn("groups", content)
         self.assertIn("permissions", content)
 
+    def test_include_nested_relation_and_field(self):
+        from django.contrib.auth.models import User as AuthUser
+
+        default_user = AuthUser.objects.filter(
+            manager__isnull=True,
+            officer__isnull=True,
+            is_superuser=False,
+        ).first()
+        self.client.force_authenticate(user=default_user)
+        r = self.client.get(
+            "/p/locations/1/users/?include[]=permissions.&include[]=date_of_birth&exclude[]=*"
+        )
+        self.assertEqual(200, r.status_code, r.content)
+        content = json.loads(r.content.decode("utf-8"))
+        self.assertIn("users", content)
+        self.assertIn("permissions", content)
+
     def test_include_nested_fields(self):
         """include[]=permissions.name returns only name on permissions."""
         r = self.client.get("/users/1/groups/?include[]=permissions.name")
@@ -1296,9 +1307,7 @@ class TestListRelatedAPI(APITestCase):
         r = self.client.get("/users/1/permissions/?combine.=sum(code)")
         self.assertEqual(200, r.status_code)
         content = json.loads(r.content.decode("utf-8"))
-        expected = sum(
-            self.fixture.users[0].permissions.values_list("code", flat=True)
-        )
+        expected = sum(self.fixture.users[0].permissions.values_list("code", flat=True))
         self.assertEqual(content["data"]["sum(code)"], expected)
 
     def test_combine_multiple_aggregations(self):
@@ -1314,9 +1323,7 @@ class TestListRelatedAPI(APITestCase):
 
     def test_combine_with_by_m2m(self):
         """combine.by groups results on M2M."""
-        r = self.client.get(
-            "/users/1/permissions/?combine.=count(id)&combine.by=name"
-        )
+        r = self.client.get("/users/1/permissions/?combine.=count(id)&combine.by=name")
         self.assertEqual(200, r.status_code)
         content = json.loads(r.content.decode("utf-8"))
         data = content["data"]
@@ -1326,9 +1333,7 @@ class TestListRelatedAPI(APITestCase):
 
     def test_combine_with_by_reverse_fk(self):
         """combine.by groups results on reverse FK."""
-        r = self.client.get(
-            "/locations/1/users/?combine.=count(id)&combine.by=name"
-        )
+        r = self.client.get("/locations/1/users/?combine.=count(id)&combine.by=name")
         self.assertEqual(200, r.status_code)
         content = json.loads(r.content.decode("utf-8"))
         data = content["data"]
@@ -1343,16 +1348,12 @@ class TestListRelatedAPI(APITestCase):
         )
         self.assertEqual(200, r.status_code)
         content = json.loads(r.content.decode("utf-8"))
-        expected = self.fixture.users[0].permissions.filter(
-            code__gte=1
-        ).count()
+        expected = self.fixture.users[0].permissions.filter(code__gte=1).count()
         self.assertEqual(content["data"]["count(id)"], expected)
 
     def test_combine_with_filter_reverse_fk(self):
         """Filter + combine on reverse FK."""
-        r = self.client.get(
-            "/locations/1/users/?filter{name}=0&combine.=count(id)"
-        )
+        r = self.client.get("/locations/1/users/?filter{name}=0&combine.=count(id)")
         self.assertEqual(200, r.status_code)
         content = json.loads(r.content.decode("utf-8"))
         expected = User.objects.filter(location_id=1, name="0").count()
@@ -1360,14 +1361,10 @@ class TestListRelatedAPI(APITestCase):
 
     def test_combine_min_max_m2m(self):
         """min/max aggregations on M2M."""
-        r = self.client.get(
-            "/users/1/permissions/?combine.=min(code),max(code)"
-        )
+        r = self.client.get("/users/1/permissions/?combine.=min(code),max(code)")
         self.assertEqual(200, r.status_code)
         content = json.loads(r.content.decode("utf-8"))
-        codes = list(
-            self.fixture.users[0].permissions.values_list("code", flat=True)
-        )
+        codes = list(self.fixture.users[0].permissions.values_list("code", flat=True))
         self.assertEqual(content["data"]["min(code)"], min(codes))
         self.assertEqual(content["data"]["max(code)"], max(codes))
 
@@ -1376,8 +1373,7 @@ class TestListRelatedAPI(APITestCase):
     def test_filter_and_sort(self):
         """Filtering and sorting work together."""
         r = self.client.get(
-            "/locations/1/users/?filter{name.in}=0&filter{name.in}=1"
-            "&sort[]=-name"
+            "/locations/1/users/?filter{name.in}=0&filter{name.in}=1&sort[]=-name"
         )
         self.assertEqual(200, r.status_code)
         content = json.loads(r.content.decode("utf-8"))
@@ -1386,9 +1382,7 @@ class TestListRelatedAPI(APITestCase):
 
     def test_filter_sort_and_paginate(self):
         """All three features work together."""
-        r = self.client.get(
-            "/locations/1/users/?sort[]=name&per_page=1&page=1"
-        )
+        r = self.client.get("/locations/1/users/?sort[]=name&per_page=1&page=1")
         self.assertEqual(200, r.status_code)
         content = json.loads(r.content.decode("utf-8"))
         self.assertEqual(len(content["users"]), 1)
@@ -1403,17 +1397,14 @@ class TestListRelatedPermissions(APITestCase):
     def setUp(self):
         self.fixture = create_fixture()
         from django.contrib.auth.models import User as AuthUser
+
         self.default_user = AuthUser.objects.filter(
             manager__isnull=True,
             officer__isnull=True,
             is_superuser=False,
         ).first()
-        self.manager_user = AuthUser.objects.filter(
-            manager__isnull=False
-        ).first()
-        self.admin_user = AuthUser.objects.filter(
-            is_superuser=True
-        ).first()
+        self.manager_user = AuthUser.objects.filter(manager__isnull=False).first()
+        self.admin_user = AuthUser.objects.filter(is_superuser=True).first()
 
     def test_unauthenticated_can_access_non_permissioned_endpoint(self):
         """Non-permissioned endpoints work without auth."""
@@ -1437,7 +1428,6 @@ class TestListRelatedPermissions(APITestCase):
         self.client.force_authenticate(user=self.admin_user)
         r = self.client.get("/p/users/%s/" % self.default_user.pk)
         self.assertEqual(200, r.status_code)
-
 
 class TestUserLocationsAPI(APITestCase):
     """
@@ -2039,7 +2029,7 @@ class TestCatsAPI(APITestCase):
             'SELECT "tests_country"."name" AS "_country_name", COUNT("tests_car"."name") AS "_count(name)" '
             'FROM "tests_car" '
             'LEFT OUTER JOIN "tests_country" ON ("tests_car"."country_id" = "tests_country"."id") '
-            'GROUP BY 1' #"tests_country"."name"',
+            "GROUP BY 1"  # "tests_country"."name"',
         )
         self.assertEqual(
             data["meta"]["query"],
@@ -2228,14 +2218,14 @@ class TestCatsAPI(APITestCase):
     def test_combine_expression(self):
         # weird aggregation, but test data doesn't have many integer fields..
         response = self.client.get(
-            f'/cars?combine={quote("count(id) + count(name) as doubleCats")}'
+            f"/cars?combine={quote('count(id) + count(name) as doubleCats')}"
         )
         self.assertEqual(200, response.status_code, response.content)
         data = json.loads(response.content.decode("utf-8"))
         self.assertEqual(data["data"]["doubleCats"], 6)
 
         response = self.client.get(
-            f'/cars?combine={quote("count(id) * 3 as doubleCats")}'
+            f"/cars?combine={quote('count(id) * 3 as doubleCats')}"
         )
         self.assertEqual(200, response.status_code, response.content)
         data = json.loads(response.content.decode("utf-8"))
@@ -2265,7 +2255,7 @@ class TestCatsAPI(APITestCase):
     def test_combine_count_boolean(self):
         # Setup: 4 users exist with is_dead=False (default).
         # Set 2 of them to is_dead=True, 1 to None.
-        users = list(User.objects.all().order_by('id'))
+        users = list(User.objects.all().order_by("id"))
         users[0].is_dead = True
         users[0].save()
         users[1].is_dead = True
@@ -2369,7 +2359,7 @@ class TestFilters(APITestCase):
         user1_data = {
             "name": "user1",
             "last_name": "test1",
-            "data": {"enquiry": {"status": "active"}, "tags": ["important"]}
+            "data": {"enquiry": {"status": "active"}, "tags": ["important"]},
         }
         response = self.client.post(
             "/users/", json.dumps(user1_data), content_type="application/json"
@@ -2382,7 +2372,7 @@ class TestFilters(APITestCase):
         user2_data = {
             "name": "user2",
             "last_name": "test2",
-            "data": {"enquiry": {"status": "inactive"}, "tags": ["normal"]}
+            "data": {"enquiry": {"status": "inactive"}, "tags": ["normal"]},
         }
         response = self.client.post(
             "/users/", json.dumps(user2_data), content_type="application/json"
@@ -2391,11 +2381,7 @@ class TestFilters(APITestCase):
             self.skipTest(f"User creation failed: {response.content}")
         self.assertEqual(201, response.status_code, response.content)
 
-        user3_data = {
-            "name": "user3",
-            "last_name": "test3",
-            "data": {"other": "data"}
-        }
+        user3_data = {"name": "user3", "last_name": "test3", "data": {"other": "data"}}
         response = self.client.post(
             "/users/", json.dumps(user3_data), content_type="application/json"
         )
@@ -2420,7 +2406,9 @@ class TestFilters(APITestCase):
         # Verify that users have data fields when explicitly included
         for user in content["users"]:
             if user["name"] in ["user1", "user2", "user3"]:
-                self.assertIn("data", user, f"data field not found in user {user['name']}")
+                self.assertIn(
+                    "data", user, f"data field not found in user {user['name']}"
+                )
 
         # Test has_key filter (Django standard JSON lookup)
         url = "/users/?filter{data.has_key}=enquiry"
@@ -2442,7 +2430,9 @@ class TestFilters(APITestCase):
         response = self.client.get(url)
         self.assertEqual(response.status_code, 200, response.content)
         content = json.loads(response.content.decode("utf-8"))
-        self.assertEqual(len(content["users"]), 1)  # only user1 has important as first tag
+        self.assertEqual(
+            len(content["users"]), 1
+        )  # only user1 has important as first tag
         self.assertEqual(content["users"][0]["name"], "user1")
 
         # Test isnull lookup on nested path (Django standard JSON lookup)
@@ -2468,7 +2458,9 @@ class TestFilters(APITestCase):
         content = json.loads(response.content.decode("utf-8"))
 
         # Find user1 and verify their data
-        user1 = next((user for user in content["users"] if user["name"] == "user1"), None)
+        user1 = next(
+            (user for user in content["users"] if user["name"] == "user1"), None
+        )
         self.assertIsNotNone(user1, "user1 not found in response")
         self.assertIn("data", user1, "data field not found in user1")
 
