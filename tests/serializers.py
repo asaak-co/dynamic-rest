@@ -111,6 +111,7 @@ class GroupSerializer(DynamicModelSerializer):
             'loc1users',
             'loc1usersLambda',
             'loc1usersGetter',
+            'loc1usersOrdered',
         )
 
     permissions = DynamicRelationField(
@@ -147,6 +148,15 @@ class GroupSerializer(DynamicModelSerializer):
         many=True,
         queryset=lambda srlzr: User.objects.filter(location_id=1),
         deferred=True)
+
+    # Queryset with custom filtering and ordering
+    loc1usersOrdered = DynamicRelationField(
+        'UserSerializer',
+        source='users',
+        many=True,
+        queryset=User.objects.filter(location_id=1).order_by('-name'),
+        deferred=True
+    )
 
     # Custom getter/setter
     loc1usersGetter = DynamicRelationField(

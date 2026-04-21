@@ -1391,6 +1391,47 @@ class TestListRelatedAPI(APITestCase):
         self.assertTrue(content["meta"]["total_results"] >= 1)
 
 
+class TestListRelatedFieldQueryset(APITestCase):
+    """Test that list_related honors a field's custom queryset.
+
+    When a DynamicRelationField is defined with a queryset that applies
+    custom filtering and/or ordering, GET /<resource>/<pk>/<field>/ should
+    return only the objects matching that queryset (intersected with the
+    parent relation) and preserve the queryset's ordering.
+    """
+
+    def setUp(self):
+        self.fixture = create_fixture()
+        # Group 1 has all 4 users (users 1,2,3,4 with location_ids 1,1,2,3).
+        # GroupSerializer.loc1users restricts to User.objects.filter(location_id=1),
+        # so /groups/1/loc1users/ should only return users 1 and 2.
+        self.group = self.fixture.groups[0]
+
+    def test_many_relation_honors_queryset_filter(self):
+        r = self.client.get("/groups/%s/loc1users/" % self.group.pk)
+        self.assertEqual(200, r.status_code, r.content)
+        content = json.loads(r.content.decode("utf-8"))
+        returned_ids = sorted([u["id"] for u in content["users"]])
+        self.assertEqual([1, 2], returned_ids)
+        self.assertEqual(2, content["meta"]["total_results"])
+
+    def test_many_relation_honors_callable_queryset_filter(self):
+        r = self.client.get("/groups/%s/loc1usersLambda/" % self.group.pk)
+        self.assertEqual(200, r.status_code, r.content)
+        content = json.loads(r.content.decode("utf-8"))
+        returned_ids = sorted([u["id"] for u in content["users"]])
+        self.assertEqual([1, 2], returned_ids)
+
+    def test_many_relation_honors_queryset_ordering(self):
+        # loc1usersOrdered filters location_id=1 AND order_by('-name').
+        # Users 1 and 2 have names "0" and "1", so descending order is [2, 1].
+        r = self.client.get("/groups/%s/loc1usersOrdered/" % self.group.pk)
+        self.assertEqual(200, r.status_code, r.content)
+        content = json.loads(r.content.decode("utf-8"))
+        returned_ids = [u["id"] for u in content["users"]]
+        self.assertEqual([2, 1], returned_ids)
+
+
 class TestListRelatedPermissions(APITestCase):
     """Test that list_related respects parent permissions."""
 

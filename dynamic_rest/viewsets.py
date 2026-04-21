@@ -1186,7 +1186,19 @@ class WithDynamicViewSetBase(object):
         # filtering, sorting, pagination, and includes for free.
         source = field.source or field_name
         related_obj = getattr(instance, source)
-        if hasattr(related_obj, 'all'):
+
+        # If the field declares a custom queryset, honor its filtering
+        # and ordering by starting from it and restricting to objects
+        # reachable through the parent relation.
+        field_queryset = field.queryset
+        if callable(field_queryset):
+            field_queryset = field_queryset(temp_serializer)
+
+        if field_queryset is not None and hasattr(related_obj, 'all'):
+            related_qs = field_queryset.filter(
+                pk__in=related_obj.all().values('pk')
+            )
+        elif hasattr(related_obj, 'all'):
             related_qs = related_obj.all()
         else:
             related_qs = related_obj
