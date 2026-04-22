@@ -22,6 +22,8 @@ from tests.serializers import (
     DogSerializer,
     GroupSerializer,
     PermissionsLocationSerializer,
+    PermissionsLocationWriteOnlyUsersSerializer,
+    ChildPermLocationSerializer,
     HorseSerializer,
     LocationSerializer,
     OfficerSerializer,
@@ -78,6 +80,18 @@ class PermissionsLocationViewSet(
     DynamicModelViewSet
 ):
     serializer_class = PermissionsLocationSerializer
+    model = Location
+    queryset = Location.objects.all()
+
+
+class PermissionsLocationWriteOnlyUsersViewSet(DynamicModelViewSet):
+    serializer_class = PermissionsLocationWriteOnlyUsersSerializer
+    model = Location
+    queryset = Location.objects.all()
+
+
+class ChildPermLocationViewSet(DynamicModelViewSet):
+    serializer_class = ChildPermLocationSerializer
     model = Location
     queryset = Location.objects.all()
 

@@ -490,6 +490,33 @@ class WithDynamicViewSetBase(object):
         if hasattr(self, '_request_fields'):
             del self._request_fields
 
+    def _clear_inex_params(self, request):
+        for key in (self.INCLUDE, self.EXCLUDE):
+            if key in request.query_params:
+                del request.query_params[key]
+        self._refresh_query_params()
+
+    def _list_related_field_readable(self, request, field_name):
+        """Return False if `field_name` resolves write-only for this user.
+
+        Builds a bound parent serializer with the field selected, runs
+        `initialized()` so PermissionsSerializerMixin applies spec-driven
+        attribute overrides, then checks the resulting field's write_only
+        flag. This honors permission-driven write_only as well as
+        Meta.write_only_fields / Meta.hidden_fields.
+        """
+        serializer_class = self.get_serializer_class()
+        bound = serializer_class(
+            context={'request': request, 'view': self},
+            request_fields={field_name: True},
+        )
+        if hasattr(bound, 'initialized'):
+            bound.initialized()
+        bound_field = bound.fields.get(field_name)
+        if bound_field is None:
+            return False
+        return not getattr(bound_field, 'write_only', False)
+
     def create_related(self, request, pk=None, field_name=None):
         """Create an instance of a related object through a related field.
 
@@ -1153,6 +1180,31 @@ class WithDynamicViewSetBase(object):
                 ):
                     raise exceptions.PermissionDenied()
 
+        # Reject fields that resolve as write-only for this request's user.
+        # Covers permission-driven write_only (PermissionsSerializerMixin
+        # applies spec via initialized()), Meta.write_only_fields, and
+        # Meta.hidden_fields. A write-only field is not readable, so it
+        # should not be listable through this endpoint.
+        if not self._list_related_field_readable(request, field_name):
+            raise exceptions.PermissionDenied()
+
+        try:
+            return self._list_related_dispatch(
+                request, pk, field_name, field, is_many, instance,
+                temp_serializer,
+            )
+        finally:
+            # After the response is built, any post-response work
+            # (Browsable API form rendering, logging) that rebuilds the
+            # parent serializer would re-parse include[]/exclude[] and
+            # raise ParseError because the tokens target child fields.
+            # The child viewset has already consumed them, so strip them.
+            self._clear_inex_params(request)
+
+    def _list_related_dispatch(
+        self, request, pk, field_name, field, is_many, instance,
+        temp_serializer,
+    ):
         if not is_many:
             # Single relation (FK / O2O): use a fully-bound serializer
             # to properly resolve and render the related object.

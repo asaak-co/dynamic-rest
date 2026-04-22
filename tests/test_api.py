@@ -1390,6 +1390,41 @@ class TestListRelatedAPI(APITestCase):
         # Total should be all users at location 1, not just 1
         self.assertTrue(content["meta"]["total_results"] >= 1)
 
+    # ── include/exclude targeting child fields ────────────────────────
+
+    def test_child_only_include_with_browsable_api(self):
+        """include[]=<child_field> must not ParseError when the Browsable
+        API renderer rebuilds the parent serializer.
+
+        Regression: list_related left include[]/exclude[] on the parent
+        request, so post-response form rendering called
+        LocationSerializer.get_fields() with request_fields={"last_name": True},
+        raising ParseError because last_name is a User field, not Location.
+        """
+        r = self.client.get(
+            "/locations/1/users/?include[]=last_name",
+            HTTP_ACCEPT="text/html",
+        )
+        self.assertEqual(200, r.status_code, r.content[:500])
+
+    def test_child_only_include_applied_to_related(self):
+        """include[]=<child_field> is still consumed by the child viewset."""
+        r = self.client.get("/locations/1/users/?include[]=last_name")
+        self.assertEqual(200, r.status_code)
+        content = json.loads(r.content.decode("utf-8"))
+        self.assertTrue(content["users"], "expected at least one user")
+        # last_name is a deferred field on UserSerializer; asking to include
+        # it must produce it in the response.
+        self.assertIn("last_name", content["users"][0])
+
+    def test_child_only_exclude_with_browsable_api(self):
+        """exclude[]=<child_field> likewise must not ParseError under html."""
+        r = self.client.get(
+            "/locations/1/users/?exclude[]=name",
+            HTTP_ACCEPT="text/html",
+        )
+        self.assertEqual(200, r.status_code, r.content[:500])
+
 
 class TestListRelatedFieldQueryset(APITestCase):
     """Test that list_related honors a field's custom queryset.
@@ -1469,6 +1504,44 @@ class TestListRelatedPermissions(APITestCase):
         self.client.force_authenticate(user=self.admin_user)
         r = self.client.get("/p/users/%s/" % self.default_user.pk)
         self.assertEqual(200, r.status_code)
+
+    def test_write_only_field_rejects_list_related(self):
+        """A relation flagged write_only by permissions is not listable.
+
+        PermissionsLocationWriteOnlyUsersSerializer sets
+        fields.users.write_only=True for the '*' role, so the default
+        user can read a location but cannot list its users through
+        list_related. Because full_permissions is checked with
+        even_if_superuser=True, this applies to superusers too — the
+        role '*' matches every user.
+        """
+        self.client.force_authenticate(user=self.default_user)
+        r = self.client.get("/p/locations_wo_users/1/users/")
+        self.assertEqual(403, r.status_code, r.content)
+
+    def test_child_write_only_field_omitted_from_list_related(self):
+        """Fields the child serializer marks write_only per this user are
+        omitted from the list_related response, even when requested.
+
+        The related viewset uses the child serializer with request
+        context, so PermissionsSerializerMixin.initialized() applies the
+        spec. Write-only fields are then excluded by DRF during
+        to_representation.
+        """
+        self.client.force_authenticate(user=self.default_user)
+        r = self.client.get(
+            "/p/child_perm_locations/1/users/?include[]=last_name"
+        )
+        self.assertEqual(200, r.status_code, r.content)
+        content = json.loads(r.content.decode("utf-8"))
+        self.assertIn("users", content)
+        self.assertTrue(content["users"], "expected at least one user")
+        for user in content["users"]:
+            self.assertNotIn(
+                "last_name", user,
+                "last_name is write_only per child permissions; "
+                "should not appear in the response",
+            )
 
 class TestUserLocationsAPI(APITestCase):
     """

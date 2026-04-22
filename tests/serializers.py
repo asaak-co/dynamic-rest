@@ -315,6 +315,85 @@ class PermissionsLocationSerializer(LocationSerializer):
         }
 
 
+class PermissionsLocationWriteOnlyUsersSerializer(LocationSerializer):
+    """Location where `users` is flagged write_only for non-superusers.
+
+    Used to test that list_related rejects write-only relation fields.
+    """
+
+    class Meta(LocationSerializer.Meta):
+        permissions = {
+            '*': {
+                'read': True,
+                'list': True,
+                'fields': {
+                    'users': {
+                        'write_only': True,
+                    },
+                },
+            },
+        }
+
+
+class ChildPermUserSerializer(DynamicModelSerializer):
+    """User serializer whose own permissions flag `last_name` write_only.
+
+    Used to exercise child-side field filtering through list_related.
+    """
+
+    class Meta:
+        model = User
+        name = 'user'
+        name_field = 'name'
+        fields = (
+            'id',
+            'name',
+            'last_name',
+            'location',
+        )
+        deferred_fields = ('last_name',)
+        permissions = {
+            '*': {
+                'read': True,
+                'list': True,
+                'fields': {
+                    'last_name': {
+                        'write_only': True,
+                    },
+                },
+            },
+        }
+
+    location = DynamicRelationField('LocationSerializer')
+
+
+class ChildPermLocationSerializer(DynamicModelSerializer):
+    """Location with a `users` relation pointing at ChildPermUserSerializer.
+
+    Parent grants list/read; child (`ChildPermUserSerializer`) applies its
+    own write_only filtering.
+    """
+
+    class Meta:
+        model = Location
+        name = 'location'
+        name_field = 'name'
+        fields = ('id', 'name', 'users')
+        permissions = {
+            '*': {
+                'read': True,
+                'list': True,
+            },
+        }
+
+    users = DynamicRelationField(
+        'ChildPermUserSerializer',
+        source='user_set',
+        many=True,
+        deferred=False,
+    )
+
+
 class ProfileSerializer(DynamicModelSerializer):
 
     class Meta:
