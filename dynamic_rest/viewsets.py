@@ -1237,7 +1237,27 @@ class WithDynamicViewSetBase(object):
         # Many relation: route through a dynamic viewset so we get
         # filtering, sorting, pagination, and includes for free.
         source = field.source or field_name
-        related_obj = getattr(instance, source)
+        if source == '*':
+            # Virtual relation defined via a getter method on the parent
+            # serializer (source='*', getter='get_<name>'). getattr(instance,
+            # '*') would always fail; resolve through the getter instead.
+            getter_name = field.getter if isinstance(field.getter, str) else (
+                getattr(field, 'method_name', None)
+            )
+            if not getter_name or not hasattr(temp_serializer, getter_name):
+                raise exceptions.NotFound(
+                    '"%s" is not a listable relation.' % field_name
+                )
+            related_obj = getattr(temp_serializer, getter_name)(instance)
+            # Getters commonly return a Python list of instances; rebuild
+            # a queryset via pk__in so the nested viewset can filter,
+            # sort, and paginate.
+            if isinstance(related_obj, list):
+                related_model = field.serializer_class.get_model()
+                pks = [getattr(o, 'pk', o) for o in related_obj]
+                related_obj = related_model.objects.filter(pk__in=pks)
+        else:
+            related_obj = getattr(instance, source)
 
         # If the field declares a custom queryset, honor its filtering
         # and ordering by starting from it and restricting to objects

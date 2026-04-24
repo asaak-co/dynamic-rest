@@ -1467,6 +1467,41 @@ class TestListRelatedFieldQueryset(APITestCase):
         self.assertEqual([2, 1], returned_ids)
 
 
+class TestListRelatedVirtualGetter(APITestCase):
+    """Virtual many-relation defined with source='*' and a getter.
+
+    GroupSerializer.loc1usersGetter has source='*' (set implicitly by the
+    getter kwarg) and getter='get_loc1usersGetter'. list_related must
+    resolve the getter against the parent serializer instead of calling
+    getattr(instance, '*').
+    """
+
+    def setUp(self):
+        self.fixture = create_fixture()
+        self.group = self.fixture.groups[0]
+
+    def test_virtual_getter_relation_returns_objects(self):
+        r = self.client.get("/groups/%s/loc1usersGetter/" % self.group.pk)
+        self.assertEqual(200, r.status_code, r.content)
+        content = json.loads(r.content.decode("utf-8"))
+        returned_ids = sorted([u["id"] for u in content["users"]])
+        self.assertEqual([1, 2], returned_ids)
+
+    def test_virtual_getter_with_star_exclude(self):
+        # Reproduces the reported case: include specific fields alongside
+        # exclude[]=* — must not raise "'Group' object has no attribute '*'".
+        r = self.client.get(
+            "/groups/%s/loc1usersGetter/"
+            "?include[]=id&include[]=name&exclude[]=*&exclude_links=1"
+            % self.group.pk
+        )
+        self.assertEqual(200, r.status_code, r.content)
+        content = json.loads(r.content.decode("utf-8"))
+        self.assertIn("users", content)
+        for user in content["users"]:
+            self.assertEqual(set(user.keys()), {"id", "name"})
+
+
 class TestListRelatedPermissions(APITestCase):
     """Test that list_related respects parent permissions."""
 
