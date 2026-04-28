@@ -24,6 +24,7 @@ from tests.serializers import (
     PermissionsLocationSerializer,
     PermissionsLocationWriteOnlyUsersSerializer,
     ChildPermLocationSerializer,
+    JoinDupLocationSerializer,
     HorseSerializer,
     LocationSerializer,
     OfficerSerializer,
@@ -94,6 +95,20 @@ class ChildPermLocationViewSet(DynamicModelViewSet):
     serializer_class = ChildPermLocationSerializer
     model = Location
     queryset = Location.objects.all()
+
+
+class JoinDupLocationViewSet(DynamicModelViewSet):
+    """Simulates a parent viewset whose get_queryset JOINs through a
+    related table (as a permission filter often does), producing
+    duplicate rows for parents that have multiple matching children.
+    """
+    serializer_class = JoinDupLocationSerializer
+    model = Location
+
+    def get_queryset(self):
+        # JOIN through users without distinct(), which yields one
+        # row per (location, user) pair.
+        return Location.objects.filter(user__isnull=False)
 
 
 class GroupNoMergeDictViewSet(DynamicModelViewSet):

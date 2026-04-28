@@ -394,6 +394,40 @@ class ChildPermLocationSerializer(DynamicModelSerializer):
     )
 
 
+class JoinDupLocationSerializer(DynamicModelSerializer):
+    """Location with both a real and a virtual `users` relation.
+
+    Used to exercise list_related when the parent viewset's
+    get_queryset returns duplicate rows for the same parent (e.g. a
+    permission filter that JOINs through related tables).
+    """
+
+    class Meta:
+        model = Location
+        name = 'location'
+        name_field = 'name'
+        fields = ('id', 'name', 'users', 'active_users')
+
+    users = DynamicRelationField(
+        'UserSerializer',
+        source='user_set',
+        many=True,
+        deferred=False,
+    )
+
+    active_users = DynamicRelationField(
+        'UserSerializer',
+        source='*',
+        getter='get_active_users',
+        many=True,
+        deferred=True,
+        required=False,
+    )
+
+    def get_active_users(self, instance):
+        return list(instance.user_set.all())
+
+
 class ProfileSerializer(DynamicModelSerializer):
 
     class Meta:

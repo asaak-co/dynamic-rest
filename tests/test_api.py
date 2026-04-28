@@ -1554,6 +1554,36 @@ class TestListRelatedPermissions(APITestCase):
         r = self.client.get("/p/locations_wo_users/1/users/")
         self.assertEqual(403, r.status_code, r.content)
 
+    def test_parent_queryset_with_join_duplicates(self):
+        """list_related must not crash when get_queryset() returns
+        duplicate rows for the same parent.
+
+        Regression: permission filters that JOIN through a related
+        table (e.g. ``Collection.objects.filter(users__id=...)``) yield
+        one row per matching child. Calling .get(pk=...) on such a
+        queryset raises MultipleObjectsReturned even though only one
+        parent is targeted. Using .first() with .filter(pk=...) sidesteps
+        this without paying for SELECT DISTINCT.
+        """
+        # Fixture: location 0 has 2 users, so the joined queryset returns
+        # 2 rows for location 0.
+        r = self.client.get("/p/join_dup_locations/1/users/")
+        self.assertEqual(200, r.status_code, r.content)
+        content = json.loads(r.content.decode("utf-8"))
+        self.assertIn("users", content)
+
+    def test_parent_queryset_with_join_duplicates_virtual(self):
+        """Same as above but for a virtual (source='*' + getter) relation.
+
+        The .first() fix sits on the parent lookup, before the
+        virtual-vs-direct branching in _list_related_dispatch, so it
+        applies to virtual relations too.
+        """
+        r = self.client.get("/p/join_dup_locations/1/active_users/")
+        self.assertEqual(200, r.status_code, r.content)
+        content = json.loads(r.content.decode("utf-8"))
+        self.assertIn("users", content)
+
     def test_child_write_only_field_omitted_from_list_related(self):
         """Fields the child serializer marks write_only per this user are
         omitted from the list_related response, even when requested.

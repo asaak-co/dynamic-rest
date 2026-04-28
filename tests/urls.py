@@ -35,6 +35,11 @@ router.register(
     viewsets.ChildPermLocationViewSet,
     namespace='p',
 )
+router.register(
+    r'p/join_dup_locations',
+    viewsets.JoinDupLocationViewSet,
+    namespace='p',
+)
 
 urlpatterns = [
     url(r'^', include(router.urls)),

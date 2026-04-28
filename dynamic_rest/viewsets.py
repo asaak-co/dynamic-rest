@@ -1158,11 +1158,13 @@ class WithDynamicViewSetBase(object):
 
         # Check parent exists and user has read permission.
         # get_queryset() applies permission-based filtering, so if
-        # the user cannot read the parent, .get() raises NotFound.
+        # the user cannot read the parent, no row matches and we 404.
+        # .first() (vs .get()) tolerates permission filters that JOIN
+        # through related tables and yield duplicate rows for the same
+        # parent — we only need one Python instance.
         parent_qs = self.get_queryset()
-        try:
-            instance = parent_qs.get(pk=pk)
-        except parent_qs.model.DoesNotExist:
+        instance = parent_qs.filter(pk=pk).first()
+        if instance is None:
             raise exceptions.NotFound()
 
         # Check field-level permissions from the parent serializer.
