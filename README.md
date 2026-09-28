@@ -170,6 +170,29 @@ router = DynamicRouter()
 router.register('/users', UserViewSet)
 ```
 
+## Values inherited by related-create forms
+
+A `DynamicRelationField` with `create=True` may declare how a newly created
+related record inherits fields from its parent. Each child field names a
+dot-separated parent field path and an action:
+
+```python
+contract = DynamicRelationField(
+    'ContractSerializer',
+    create=True,
+    inverse='application',
+    create_values={
+        'product': {'from': 'product', 'action': 'default'},
+        'company': {'from': 'company', 'action': 'set'},
+    },
+)
+```
+
+The relation's OPTIONS field metadata includes `create_values`. A form should
+prepopulate both values and make `set` fields read-only. On a related-create
+POST, `default` fills a missing or null child value, while `set` overrides any
+submitted value. Parent relations are supplied as primary keys.
+
 ## Linked relationships
 
 One of the key features of the DREST serializer layer is the ability to represent relationships in different ways, depending on the request context (external requirements) and the code context (internal requirements).
