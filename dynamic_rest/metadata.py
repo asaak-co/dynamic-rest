@@ -132,6 +132,14 @@ class DynamicMetadata(SimpleMetadata):
         }
 
         meta = serializer.get_meta()
+        # A resource role describes its UI purpose. It is independent of the
+        # permissions and user roles returned elsewhere in OPTIONS.
+        role = getattr(meta, 'role', None)
+        if role is not None:
+            resource['role'] = role
+        role_metadata = getattr(meta, 'role_metadata', None)
+        if role_metadata is not None:
+            resource['role_metadata'] = role_metadata
         default_fields = getattr(meta, 'default_fields', None)
         default_view = getattr(meta, 'default_view', None)
         if default_fields is not None:
