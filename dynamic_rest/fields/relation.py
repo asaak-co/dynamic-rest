@@ -46,6 +46,7 @@ class DynamicRelationField(WithRelationalFieldMixin, DynamicField):
             debug=False,
             inverse=None,
             create=False,
+            create_values=None,
             image=False,
             filter=None,
             **kwargs
@@ -67,12 +68,15 @@ class DynamicRelationField(WithRelationalFieldMixin, DynamicField):
             embed: If True, always embed related object(s). Will not sideload,
                 and will include the full object unless specifically excluded.
             create: if True, creation will be allowed through this field
+            create_values: child fields mapped to a parent path and a
+                "default" or "set" action for related-create forms
         """
         self._serializer_class = serializer_class
         self.queryset = queryset
         self.sideloading = sideloading
         self.debug = debug
         self.create = create
+        self.create_values = create_values
         self.image = image
         self.filter = filter
         self.inverse = inverse

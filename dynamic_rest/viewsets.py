@@ -549,6 +549,11 @@ class WithDynamicViewSetBase(object):
 
         related_serializer = related_field.serializer
         related_serializer_name = related_serializer.get_name()
+        data = request.data
+        keys = list(data.keys())
+        if len(keys) == 1 and keys[0] == related_serializer_name:
+            data = data[related_serializer_name]
+        data = self._apply_create_values(data, instance, related_field)
         remote_field = model_field.remote_field
         update_after = True
 
@@ -556,7 +561,7 @@ class WithDynamicViewSetBase(object):
             # use the hybrid API method
 
             related_serializer = related_field.get_serializer(
-                data=request.data,
+                data=data,
                 request_fields=None,
                 include_fields='*',
                 envelope=True,
@@ -569,14 +574,6 @@ class WithDynamicViewSetBase(object):
             if inverse_field_name:
                 # save by setting the inverse field
                 inverse_field = related_serializer.get_field(inverse_field_name)
-                data = request.data
-                if hasattr(data, '_mutable'):
-                    data._mutable = True
-
-                keys = list(data.keys())
-                if len(keys) == 1 and keys[0] == related_serializer_name:
-                    data = data[related_serializer_name]
-
                 # set the current record as the related object
                 # using the inverse field
                 data[inverse_field_name] = [pk] if inverse_field.many else pk
@@ -615,6 +612,24 @@ class WithDynamicViewSetBase(object):
         headers = self.get_success_headers(related_serializer.data)
         headers['Location'] = primary_serializer.get_url(pk)
         return Response(related_serializer.data, status=201, headers=headers)
+
+    @staticmethod
+    def _apply_create_values(data, instance, related_field):
+        """Apply declared parent values to a related-create payload."""
+        data = data.copy()
+        for child_name, instruction in (related_field.create_values or {}).items():
+            action = instruction.get('action')
+            if action not in ('default', 'set'):
+                continue
+            if action == 'default' and data.get(child_name) is not None:
+                continue
+            value = instance
+            for part in instruction.get('from', '').split('.'):
+                value = getattr(value, part, None) if value is not None else None
+            if value is None:
+                continue
+            data[child_name] = getattr(value, 'pk', value)
+        return data
 
     def list(self, request, **kwargs):
         combine = self.get_request_feature(self.COMBINE)

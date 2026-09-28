@@ -270,6 +270,8 @@ class DynamicMetadata(SimpleMetadata):
         many = False
         base_field = field
         if isinstance(field, DynamicRelationField):
+            if field.create_values is not None:
+                field_info['create_values'] = field.create_values
             field = field.serializer
         if isinstance(field, ListSerializer):
             field = field.child
