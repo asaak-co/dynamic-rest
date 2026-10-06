@@ -108,7 +108,7 @@ class DynamicField(fields.Field, DynamicBase):
         self.setter = kwargs.pop('setter', None)
         self.depends = kwargs.pop('depends', None)
         self.hide = kwargs.pop('hide', None)
-        self.style = kwargs.pop('style', None) or {}
+        self.style = kwargs.get('style', None) or {}
         self.long = kwargs.pop('long', False)
         self.sort_by = kwargs.pop('sort_by', None)
         self.sortable = kwargs.pop('sortable', None)
