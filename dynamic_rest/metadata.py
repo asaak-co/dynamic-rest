@@ -4,7 +4,7 @@ from collections import OrderedDict
 import inflection
 
 from rest_framework.exceptions import APIException, ValidationError
-from rest_framework.fields import empty
+from rest_framework.fields import DecimalField, FloatField, IntegerField, empty
 from rest_framework.metadata import SimpleMetadata
 from rest_framework.serializers import ListSerializer, ModelSerializer
 
@@ -237,6 +237,14 @@ class DynamicMetadata(SimpleMetadata):
             ('extra', 'extra')
         ):
             field_info[out] = getattr(field, internal, None)
+
+        # Preserve serializer bounds for frontend numeric validation, including
+        # the zero minimum generated for Django positive integer fields.
+        if isinstance(field, (IntegerField, FloatField, DecimalField)):
+            for name in ('min_value', 'max_value'):
+                value = getattr(field, name, None)
+                if value is not None:
+                    field_info[name] = value
 
         if field_info['deferred'] is None:
             field_info['deferred'] = False
